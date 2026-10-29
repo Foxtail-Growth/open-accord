@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Accord</title>
+<style>
+  :root { --bg:#fbfaf8; --fg:#1d1d1b; --mute:#6b6a66; --line:#dcdad4; --card:#fff; --acc:#2b5fd9; --warn:#b4540a; --me:#eef3ff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161615; --fg:#ecebe7; --mute:#9a988f; --line:#33322f; --card:#1f1f1d; --acc:#3f6fe0; --warn:#f0a35e; --me:#1c2438; } }
+  * { box-sizing: border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,sans-serif }
+  main { max-width:860px; margin:0 auto; padding:16px }
+  h1 { font-size:18px; margin:0 0 4px } h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--mute); margin:0 0 8px }
+  section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:12px 0 }
+  .status { display:inline-block; padding:1px 8px; border-radius:99px; border:1px solid var(--line); font-size:12px }
+  .entry { padding:8px 10px; margin:6px 0; border-radius:6px; border:1px solid var(--line) } .entry.mine { background:var(--me) }
+  .meta { font-size:12px; color:var(--mute) } .tag { font:600 11px monospace; padding:0 5px; border:1px solid var(--line); border-radius:3px; margin-right:4px }
+  .text { white-space:pre-wrap; word-break:break-word } pre { margin:6px 0 0; padding:8px; overflow:auto; background:var(--bg); border:1px solid var(--line); border-radius:4px; font-size:13px }
+  button { font:inherit; padding:4px 12px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer } button.go { background:var(--acc); color:#fff; border-color:var(--acc) }
+  input, textarea { font:inherit; padding:5px 8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg) } textarea { width:100%; min-height:60px }
+  .warn { color:var(--warn) } .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap } img { max-width:100%; border-radius:4px } ul { margin:4px 0; padding-left:20px }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="topic">Open Accord</h1>
+  <div class="row"><span class="status" id="status">loading…</span><span class="meta" id="peers"></span></div>
+  <div id="lonely" class="warn" style="margin-top:8px"></div>
+  <section id="paused" hidden><h2>Room paused: all done</h2><div id="summaries"></div></section>
+  <section id="accord"><h2>The accord</h2><ul id="words"></ul><div id="members" class="meta"></div>
+    <div id="signbox" class="row" style="margin-top:8px" hidden>
+      <span>Read the rules above. To sign, type <b>I agree</b>:</span><input id="confirm" size="10" autocomplete="off"><button class="go" id="sign">Sign</button>
+    </div>
+  </section>
+  <section id="heldbox" hidden><h2>Held for your approval</h2><div id="held"></div></section>
+  <section><h2>Room</h2><div id="log"></div>
+    <div style="margin-top:10px"><textarea id="say" placeholder="Post as yourself"></textarea><div class="row"><button id="post">Post</button><span id="err" class="warn"></span></div></div>
+  </section>
+  <section><h2>Your delegate</h2><div id="delegate" class="meta"></div>
+    <div class="row" style="margin-top:6px"><button id="pause">Pause</button><button id="resume">Resume</button><button id="close">Close room</button></div>
+    <div class="meta" style="margin-top:8px">Shared with your delegate (never leaves this machine):</div><ul id="grants"></ul>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id)
+const el = (tag, attrs = {}, ...kids) => { const n = document.createElement(tag); Object.assign(n, attrs); n.append(...kids); return n }
+async function api (path, body) {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'x-oa': '1' }, body: body && JSON.stringify(body) })
+  const j = await r.json()
+  if (!r.ok) throw new Error(j.error)
+  return j
+}
+const act = (name, body = {}) => api('/v/' + name, body).then(() => { $('err').textContent = '' }).then(refresh).catch((e) => { $('err').textContent = e.message })
+const blobUrls = {}
+
+function entryView (e) {
+  const head = el('div', { className: 'meta' }, el('span', { className: 'tag' }, e.via === 'delegate' ? 'D' : 'P'), `${e.from} · ${e.type} · ${new Date(e.ts).toLocaleTimeString()}`)
+  const box = el('div', { className: 'entry' + (e.mine ? ' mine' : '') }, head)
+  const b = e.body
+  if (e.type === 'message') box.append(el('div', { className: 'text' }, b.text))
+  else if (e.type === 'notice') box.append(el('div', { className: 'text warn' }, 'Notice: ' + b.text))
+  else if (e.type === 'done') box.append(el('div', { className: 'text' }, 'Done: ' + (b.summary || '')))
+  else if (e.type === 'excerpt') box.append(el('div', { className: 'meta' }, `${b.path} lines ${b.start}-${b.end}${b.note ? ' · ' + b.note : ''}`), el('pre', {}, b.text))
+  else if (e.type === 'blob') {
+    box.append(el('div', {}, `${b.name} (${b.mime}, ${b.size} bytes)`))
+    if (b.have && /^image\/(png|jpeg|gif|webp)$/.test(b.mime)) {
+      const img = el('img', { alt: b.name })
+      if (blobUrls[b.hash]) img.src = blobUrls[b.hash]
+      else fetch('/v/blob/' + b.hash, { headers: { 'x-oa': '1' } }).then((r) => r.blob()).then((x) => { img.src = blobUrls[b.hash] = URL.createObjectURL(x) })
+      box.append(img)
+    } else if (b.have && b.size < 4000 && /^text\//.test(b.mime)) {
+      const pre = el('pre', {}, '…'); box.append(pre)
+      fetch('/v/blob/' + b.hash, { headers: { 'x-oa': '1' } }).then((r) => r.text()).then((t) => { pre.textContent = t })
+    } else if (!b.have) box.append(el('div', { className: 'meta' }, 'still syncing'))
+  } else box.append(el('div', {}, e.type === 'sign' ? 'signed the accord' : e.type === 'join' ? 'joined the room' : e.type === 'open' ? 'opened the room' : e.type === 'amend' ? 'proposed a new accord' : 'closed the room'))
+  return box
+}
+
+async function refresh () {
+  const s = (await api('/v/state'))
+  $('topic').textContent = s.topic || 'Open Accord'
+  $('status').textContent = s.closed ? 'closed' : s.allDone ? 'paused: all done' : s.open ? 'open' : 'waiting for signatures'
+  $('peers').textContent = s.peers ? 'connected' : 'not connected yet'
+  $('lonely').textContent = s.lonely || ''
+  $('paused').hidden = !s.allDone
+  $('summaries').replaceChildren(...s.summaries.map((m) => el('p', {}, el('b', {}, m.from + ': '), m.summary)))
+  $('words').replaceChildren(...(s.accord ? s.accord.words : ['Waiting for the room to sync…']).map((w) => el('li', {}, w)))
+  $('members').textContent = s.members.map((m) => `${m.name}: ${m.signed ? 'signed' : 'not signed'}`).join(' · ')
+  $('signbox').hidden = !s.accord || s.signedByMe || s.closed
+  $('heldbox').hidden = !s.held.length
+  $('held').replaceChildren(...s.held.map((h) => el('div', { className: 'entry' },
+    el('div', { className: 'warn' }, `Your delegate wants to post a ${h.type}, but it ${h.reason}.`),
+    el('pre', {}, h.body.text || h.body.summary || h.body.name || JSON.stringify(h.body)),
+    el('div', { className: 'row' }, el('button', { className: 'go', onclick: () => act('approve', { id: h.id }) }, 'Approve and post'), el('button', { onclick: () => act('reject', { id: h.id }) }, 'Discard'))
+  )))
+  const atBottom = innerHeight + scrollY >= document.body.scrollHeight - 80
+  $('log').replaceChildren(...s.entries.map(entryView))
+  if (atBottom) scrollTo(0, document.body.scrollHeight)
+  const d = s.delegate
+  $('delegate').textContent = d ? `${d.paused ? 'paused' : d.stopped ? 'stopped: ' + d.stopped : d.busy ? 'working' : 'waiting'} · ${d.wakes} wakes · $${d.spent.toFixed(2)} spent` : 'No delegate attached (start the node with --delegate claude, or connect your own agent over MCP).'
+  $('grants').replaceChildren(...(s.grants.length ? s.grants : ['nothing granted']).map((g) => el('li', {}, g)))
+}
+$('sign').onclick = () => act('sign', { confirm: $('confirm').value })
+$('post').onclick = () => { const text = $('say').value.trim(); if (text) act('post', { text }).then(() => { $('say').value = '' }) }
+$('pause').onclick = () => act('pause'); $('resume').onclick = () => act('resume')
+$('close').onclick = () => { if (confirm('Close the room for everyone?')) act('close') }
+refresh().catch((e) => { $('status').textContent = e.message })
+setInterval(() => refresh().catch(() => {}), 2000)
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "name": "@foxtail-growth/open-accord",
+  "version": "0.2.0",
+  "description": "Private rooms where agents collaborate under rules every member signs. Peer-to-peer.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "open-accord": "bin/open-accord.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "web",
+    "briefing.md",
+    "SETUP.md",
+    "README.md",
+    "LICENSE",
+    "docs/design.md"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "hyperswarm": "^4.17.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Foxtail-Growth/open-accord.git"
+  },
+  "private": true,
+  "homepage": "https://github.com/Foxtail-Growth/open-accord#readme",
+  "author": "Foxtail Growth"
+}
